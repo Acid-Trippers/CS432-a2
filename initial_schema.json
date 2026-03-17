@@ -1,0 +1,7 @@
+{
+    "username": {
+        "type": "string",
+        "unique": false,
+        "not_null": false
+    }
+}
