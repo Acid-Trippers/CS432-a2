@@ -1,7 +1,6 @@
 {
-    "full_name": {
+    "name": {
         "type": "string",
-        "specific_format": "null",
         "unique": false,
         "not_null": true
     }

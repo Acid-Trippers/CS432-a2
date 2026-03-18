@@ -3,6 +3,7 @@ VALID_TYPES = ["string", "int", "float", "bool", "json", "array_int", "array_str
 import json
 import os
 import sys
+from config import INITIAL_SCHEMA_FILE
 
 def get_guided_input():
     schema = {}
@@ -78,10 +79,10 @@ def main():
     else:
         schema = get_guided_input()
 
-    with open("initial_schema.json", "w") as f:
+    with open(INITIAL_SCHEMA_FILE, "w") as f:
         json.dump(schema, f, indent=4)
     
-    print("\n[+] initial_schema.json has been saved.")
+    print(f"\n[+] {INITIAL_SCHEMA_FILE} has been saved.")
 
 if __name__ == "__main__":
     main()
