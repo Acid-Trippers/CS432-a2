@@ -13,7 +13,7 @@ NORMALIZED_DATA_FILE = os.path.join(DATA_DIR, "normalized_data.json")
 METADATA_MANAGER_FILE = os.path.join(DATA_DIR, "metadata_manager.json")
 INITIAL_SCHEMA_FILE = os.path.join(DATA_DIR, "initial_schema.json")
 ANALYZED_SCHEMA_FILE = os.path.join(DATA_DIR, "analyzed_schema.json")
-METADATA_FILE = os.path.join(DATA_DIR, "metadata.json")
+FIELD_METADATA_FILE = os.path.join(DATA_DIR, "field_metadata.json")
 
 # Other data files
 COUNTER_FILE = os.path.join(DATA_DIR, "counter.txt")
