@@ -15,7 +15,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
-from config import DATA_DIR
+from config import DATA_DIR, ANALYZED_DATA_FILE
 
 # Thresholds for SQL suitability
 SQL_CRITERIA = {
@@ -36,7 +36,7 @@ MONGO_CRITERIA = {
 # Decision confidence thresholds
 CONFIDENCE_THRESHOLDS = {
     "highConfidence": 0.75,         # Score > 0.75 = confident decision
-    "lowConfidence": 0.35           # Score < 0.35 = not confident
+    "lowConfidence": 0.35          # Score < 0.35 = not confident
 }
 
 @dataclass
@@ -97,24 +97,24 @@ class SchemaClassifier:
         
         # Factor 1: Type Stability (0-1.0 contribution)
         if field.typeStability >= SQL_CRITERIA["minTypeStability"]:
-            score += 1.0
-            reasons.append(f"✓ Type stable ({field.typeStability:.1%})")
+            score += field.typeStability
+            reasons.append(f"Type stable ({field.typeStability:.1%})")
         else:
-            reasons.append(f"✗ Type unstable ({field.typeStability:.1%} < {SQL_CRITERIA['minTypeStability']:.0%})")
+            reasons.append(f"Type unstable ({field.typeStability:.1%} < {SQL_CRITERIA['minTypeStability']:.0%})")
         
         # Factor 2: Sparsity (0-1.0 contribution)
         if field.sparsity <= SQL_CRITERIA["maxSparsity"]:
-            score += 1.0
-            reasons.append(f"✓ Dense field ({field.frequency:.1%} frequency)")
+            score += 1.0 - field.sparsity
+            reasons.append(f"Dense field ({field.frequency:.1%} frequency)")
         else:
-            reasons.append(f"✗ Sparse field ({field.frequency:.1%} frequency)")
+            reasons.append(f"Sparse field ({field.frequency:.1%} frequency)")
         
         # Factor 3: Structure Complexity (0-1.0 contribution)
         if not field.isComplex:
             score += 1.0
-            reasons.append(f"✓ Simple scalar type")
+            reasons.append(f"Simple scalar type")
         else:
-            reasons.append(f"✗ Complex structure (nested={field.isNested}, array={field.isArray})")
+            reasons.append(f"Complex structure (nested={field.isNested}, array={field.isArray})")
         
         # Check user schema if available
         if field.fieldName in self.user_schema:
@@ -146,23 +146,23 @@ class SchemaClassifier:
         if field.typeStability <= MONGO_CRITERIA["maxTypeStability"]:
             type_instability = 1.0 - field.typeStability
             score += type_instability
-            reasons.append(f"✓ Type instability ({1-field.typeStability:.1%})")
+            reasons.append(f"Type instability ({1-field.typeStability:.1%})")
         else:
-            reasons.append(f"✗ Type too stable ({field.typeStability:.1%})")
+            reasons.append(f"Type too stable ({field.typeStability:.1%})")
         
         # Factor 2: Sparsity (0-1.0 contribution)
         if field.sparsity >= MONGO_CRITERIA["minSparsity"]:
-            score += 1.0
-            reasons.append(f"✓ Sparse field OK ({field.frequency:.1%} frequency)")
+            score += field.sparsity
+            reasons.append(f"Sparse field OK ({field.frequency:.1%} frequency)")
         else:
-            reasons.append(f"✗ Dense field ({field.frequency:.1%} frequency)")
+            reasons.append(f"Dense field ({field.frequency:.1%} frequency)")
         
         # Factor 3: Structure Complexity (0-1.0 contribution)
         if field.isComplex:
             score += 1.0
-            reasons.append(f"✓ Handles complex structure (nested={field.isNested}, array={field.isArray})")
+            reasons.append(f"Handles complex structure (nested={field.isNested}, array={field.isArray})")
         else:
-            reasons.append(f"✗ Simple structure (less need for Mongo)")
+            reasons.append(f"Simple structure (less need for Mongo)")
         
         # Check user schema if available
         if field.fieldName in self.user_schema:
@@ -207,12 +207,13 @@ class SchemaClassifier:
             reason = f"Mongo suitable ({mongo_score:.2f}/1.0): Complex structure, sparse, or type-unstable"
         
         # Borderline - check which is higher
-        elif sql_score > mongo_score + 0.1:
+        ##**Maybe this is not that needed.
+        elif sql_score > mongo_score + 0.3:
             decision = "SQL"
             confidence = sql_score
             reason = f"Prefer SQL (SQL: {sql_score:.2f} > Mongo: {mongo_score:.2f}), but not high confidence"
         
-        elif mongo_score > sql_score + 0.1:
+        elif mongo_score > sql_score + 0.3:
             decision = "MONGO"
             confidence = mongo_score
             reason = f"Prefer Mongo (Mongo: {mongo_score:.2f} > SQL: {sql_score:.2f}), but not high confidence"
@@ -288,8 +289,8 @@ def runPipeline():
     """
     
     # Load analyzed data
-    with open("analyzed_data.json", 'r', encoding='utf-8') as f:
-        analyzed_file = json.load(f)
+    with open(ANALYZED_DATA_FILE, 'r', encoding='utf-8') as f:
+        analyzed_data = json.load(f)
     
     # Load user-defined schema (optional)
     user_schema = load_user_schema()
@@ -310,7 +311,7 @@ def runPipeline():
     print("-"*100)
     
     # Classify each field
-    for record in data['fields']:
+    for record in analyzed_data['fields']:
         field_name = record['field_name']
         
         stats = FieldStats(
