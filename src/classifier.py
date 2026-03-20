@@ -1,8 +1,8 @@
 """
 Field Classification Module
 Purpose: Classify fields as SQL, Mongo, or Unknown based on:
-  1. Data analysis metrics (from metadata_manager.json)
-  2. User-defined schema constraints (from initial_schema.json)
+  1. Data analysis metrics (from metadata.json)
+  2. User-defined schema constraints (embedded in metadata.json)
   3. Type stability, structure complexity, and sparsity
 
 Decision Logic:
@@ -84,32 +84,26 @@ class SchemaClassifier:
         """
         Evaluates how suitable a field is for SQL.
         Returns: (score 0-1, list of supporting/opposing reasons)
-        
-        SQL is good for:
-        - Stable types (high type stability)
-        - Non-sparse data (frequent presence)
-        - Simple scalar types (not nested/array)
-        - Enforceable constraints
         """
         reasons = []
         score = 0.0
         max_score = 3.0
         
-        # Factor 1: Type Stability (0-1.0 contribution)
+        # Factor 1: Type Stability
         if field.typeStability >= SQL_CRITERIA["minTypeStability"]:
             score += field.typeStability
             reasons.append(f"Type stable ({field.typeStability:.1%})")
         else:
             reasons.append(f"Type unstable ({field.typeStability:.1%} < {SQL_CRITERIA['minTypeStability']:.0%})")
         
-        # Factor 2: Sparsity (0-1.0 contribution)
+        # Factor 2: Sparsity
         if field.sparsity <= SQL_CRITERIA["maxSparsity"]:
             score += 1.0 - field.sparsity
             reasons.append(f"Dense field ({field.frequency:.1%} frequency)")
         else:
             reasons.append(f"Sparse field ({field.frequency:.1%} frequency)")
         
-        # Factor 3: Structure Complexity (0-1.0 contribution)
+        # Factor 3: Structure Complexity
         if not field.isComplex:
             score += 1.0
             reasons.append(f"Simple scalar type")
@@ -120,29 +114,24 @@ class SchemaClassifier:
         if field.fieldName in self.user_schema:
             user_type = self.user_schema[field.fieldName].fieldType
             if user_type in ["int", "float", "string", "bool"]:
+                score += 0.5
                 reasons.append(f"  User defined as '{user_type}' (SQL-compatible)")
             else:
                 reasons.append(f"  User defined as '{user_type}' (Mongo-favorable)")
         
-        normalized_score = score / max_score
+        normalized_score = min(1.0, score / max_score)
         return normalized_score, reasons
     
     def _evaluate_mongo_suitability(self, field: FieldStats) -> tuple[float, List[str]]:
         """
         Evaluates how suitable a field is for Mongo.
         Returns: (score 0-1, list of supporting/opposing reasons)
-        
-        Mongo is good for:
-        - Type-unstable fields (graceful schema handling)
-        - Sparse data (optional fields)
-        - Nested/array structures
-        - High cardinality (flexible documents)
         """
         reasons = []
         score = 0.0
         max_score = 3.0
         
-        # Factor 1: Type Instability (0-1.0 contribution)
+        # Factor 1: Type Instability
         if field.typeStability <= MONGO_CRITERIA["maxTypeStability"]:
             type_instability = 1.0 - field.typeStability
             score += type_instability
@@ -150,17 +139,17 @@ class SchemaClassifier:
         else:
             reasons.append(f"Type too stable ({field.typeStability:.1%})")
         
-        # Factor 2: Sparsity (0-1.0 contribution)
+        # Factor 2: Sparsity
         if field.sparsity >= MONGO_CRITERIA["minSparsity"]:
             score += field.sparsity
             reasons.append(f"Sparse field OK ({field.frequency:.1%} frequency)")
         else:
             reasons.append(f"Dense field ({field.frequency:.1%} frequency)")
         
-        # Factor 3: Structure Complexity (0-1.0 contribution)
+        # Factor 3: Structure Complexity
         if field.isComplex:
             score += 1.0
-            reasons.append(f"Handles complex structure (nested={field.isNested}, array={field.isArray})")
+            reasons.append(f"Handles complex structure via Embedding")
         else:
             reasons.append(f"Simple structure (less need for Mongo)")
         
@@ -176,62 +165,42 @@ class SchemaClassifier:
     def classifyField(self, field: FieldStats) -> Dict[str, Any]:
         """
         Classifies a field as SQL, Mongo, or Unknown with detailed reasoning.
-        
-        Decision Process:
-        1. Evaluate SQL suitability (0-1 score)
-        2. Evaluate Mongo suitability (0-1 score)
-        3. If SQL strong (>0.75) → SQL
-        4. Else if Mongo strong (>0.75) → Mongo
-        5. Else → Unknown (not confident in either)
         """
-        
         sql_score, sql_reasons = self._evaluate_sql_suitability(field)
         mongo_score, mongo_reasons = self._evaluate_mongo_suitability(field)
         
-        # Determine decision
         decision = "UNKNOWN"
         confidence = 0.0
-        reason = "Low confidence for both SQL and Mongo"
-        all_reasons = sql_reasons + mongo_reasons
         
-        # SQL strong candidate?
         if sql_score >= CONFIDENCE_THRESHOLDS["highConfidence"]:
             decision = "SQL"
             confidence = sql_score
-            reason = f"SQL suitable ({sql_score:.2f}/1.0): Clean types, stable, non-sparse"
-        
-        # Mongo strong candidate?
         elif mongo_score >= CONFIDENCE_THRESHOLDS["highConfidence"]:
             decision = "MONGO"
             confidence = mongo_score
-            reason = f"Mongo suitable ({mongo_score:.2f}/1.0): Complex structure, sparse, or type-unstable"
-        
-        # Borderline - check which is higher
-        ##**Maybe this is not that needed.
         elif sql_score > mongo_score + 0.3:
             decision = "SQL"
             confidence = sql_score
-            reason = f"Prefer SQL (SQL: {sql_score:.2f} > Mongo: {mongo_score:.2f}), but not high confidence"
-        
         elif mongo_score > sql_score + 0.3:
             decision = "MONGO"
             confidence = mongo_score
-            reason = f"Prefer Mongo (Mongo: {mongo_score:.2f} > SQL: {sql_score:.2f}), but not high confidence"
-        
         else:
             decision = "UNKNOWN"
             confidence = max(sql_score, mongo_score)
-            reason = f"Unable to confidently classify (SQL: {sql_score:.2f}, Mongo: {mongo_score:.2f}) - review manually"
         
         return {
             "fieldName": field.fieldName,
             "decision": decision,
+            "nesting_depth": field.nestingDepth,
+            "parent_path": field.parentPath,
+            "is_nested": field.isNested,
+            "is_array": field.isArray,
             "confidence": round(confidence, 3),
             "sql_score": round(sql_score, 3),
             "mongo_score": round(mongo_score, 3),
             "sql_analysis": sql_reasons,
             "mongo_analysis": mongo_reasons,
-            "reason": reason,
+            "reason": f"Decision: {decision} (SQL: {sql_score:.2f}, Mongo: {mongo_score:.2f})",
             "metrics": {
                 "frequency": round(field.frequency, 3),
                 "typeStability": round(field.typeStability, 3),
@@ -243,9 +212,7 @@ class SchemaClassifier:
         }
 
 def load_user_schema_from_metadata(analyzed_data: Dict) -> Dict[str, UserSchema]:
-    """
-    Extracts user-defined schema constraints from the merged metadata.
-    """
+    """Extracts user-defined schema constraints from the merged metadata."""
     user_schema = {}
     for field in analyzed_data.get('fields', []):
         constraints = field.get('user_constraints')
@@ -253,21 +220,13 @@ def load_user_schema_from_metadata(analyzed_data: Dict) -> Dict[str, UserSchema]
             user_schema[field['field_name']] = UserSchema(
                 fieldName=field['field_name'],
                 fieldType=constraints.get('user_type', 'unknown'),
-                isUnique=False, # Default for now
+                isUnique=False,
                 isNotNull=constraints.get('is_required', False)
             )
     return user_schema
 
 
 def runPipeline():
-    """
-    Main classification pipeline:
-    1. Load metadata.json (Merged system analysis + user schema)
-    2. Classify each field as SQL, Mongo, or Unknown
-    3. Save results to field_metadata.json
-    """
-    
-    # Load consolidated metadata
     if not os.path.exists(METADATA_FILE):
         print(f"[X] ERROR: {METADATA_FILE} not found. Run validation first.")
         return
@@ -275,14 +234,10 @@ def runPipeline():
     with open(METADATA_FILE, 'r', encoding='utf-8') as f:
         analyzed_data = json.load(f)
     
-    # Extract user-defined schema from the merged data
     user_schema = load_user_schema_from_metadata(analyzed_data)
-    
-    # Initialize classifier
     classifier = SchemaClassifier(user_schema=user_schema)
     output_records = []
     
-    # Classification results summary
     sql_count = 0
     mongo_count = 0
     unknown_count = 0
@@ -293,12 +248,9 @@ def runPipeline():
     print(f"{'Field':<25} {'Decision':<10} {'Confidence':<12} {'Reason':<35}")
     print("-"*100)
     
-    # Classify each field
     for record in analyzed_data['fields']:
-        field_name = record['field_name']
-        
         stats = FieldStats(
-            fieldName=field_name,
+            fieldName=record['field_name'],
             frequency=record['frequency'],
             dominantType=record['dominant_type'],
             typeStability=record['type_stability'],
@@ -309,11 +261,9 @@ def runPipeline():
             parentPath=record.get('parent_path', None)
         )
         
-        # Classify field
         result = classifier.classifyField(stats)
         output_records.append(result)
         
-        # Update counts
         if result['decision'] == 'SQL':
             sql_count += 1
         elif result['decision'] == 'MONGO':
@@ -321,42 +271,23 @@ def runPipeline():
         else:
             unknown_count += 1
         
-        # Print summary line
-        decision_color = result['decision']
-        confidence_display = f"{result['confidence']:.2f}"
-        reason_short = result['reason'].split(':')[0]  # First part of reason
-        
-        print(f"{field_name:<25} {decision_color:<10} {confidence_display:<12} {reason_short:<35}")
+        print(f"{result['fieldName']:<25} {result['decision']:<10} {result['confidence']:<12.2f} {result['reason'].split(':')[0]:<35}")
     
-    # Summary statistics
     total_fields = len(output_records)
     print("-"*100)
     print(f"\nSummary: SQL={sql_count}/{total_fields} | Mongo={mongo_count}/{total_fields} | Unknown={unknown_count}/{total_fields}")
     print("="*100)
     
-    # Save results
     output_file = os.path.join(DATA_DIR, 'field_metadata.json')
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(output_records, f, indent=2)
     
     print(f"\n[+] Classification results saved to {output_file}")
-    
-    # Print detailed analysis for UNKNOWN fields
-    unknown_fields = [r for r in output_records if r['decision'] == 'UNKNOWN']
-    if unknown_fields:
-        print(f"\n[!] {len(unknown_fields)} field(s) classified as UNKNOWN - review required:\n")
-        for field_result in unknown_fields:
-            print(f"  {field_result['fieldName']}")
-            print(f"   Reason: {field_result['reason']}")
-            print(f"   SQL Score: {field_result['sql_score']:.3f}")
-            print(f"   Mongo Score: {field_result['mongo_score']:.3f}")
-            print()
 
 
 def run_classification():
-    """Entry point for running classification pipeline"""
     runPipeline()
 
 
 if __name__ == "__main__":
-    run_classification() 
+    run_classification()
