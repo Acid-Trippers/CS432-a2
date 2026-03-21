@@ -14,11 +14,9 @@ def determineMongoStrategy(fieldMetadata):
         fieldName = field.get("field_name")
         isNested = field.get("is_nested", False)
         isArray = field.get("is_array", False)
-        nestingDepth = field.get("nesting_depth", 0)
 
-        if isArray and nestingDepth > 2:
-            mongoStrategyMap[fieldName] = "reference"
-        elif isNested and nestingDepth > 3:
+
+        if isArray or isNested:
             mongoStrategyMap[fieldName] = "reference"
         else:
             mongoStrategyMap[fieldName] = "embed"
