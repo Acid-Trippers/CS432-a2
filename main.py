@@ -9,14 +9,14 @@ import sys
 import time
 
 from src.config import *
-import src.router as data_router
 
 schema_definition = importlib.import_module("src.00_schema_definition")
 ingestion = importlib.import_module("src.01_ingestion")
 cleaner_mod = importlib.import_module("src.02_cleaner")
 analyzer_mod = importlib.import_module("src.03_analyzer")
-metadata_builder = importlib.import_module("src.metadata_builder")
-classifier = importlib.import_module("src.classifier")
+metadata_builder = importlib.import_module("src.04_metadata_builder")
+classifier = importlib.import_module("src.05_classifier")
+data_router = importlib.import_module("src.06_router")
 sql_schema_definer = importlib.import_module("src.sql_schema_definer")
 sql_engine = importlib.import_module("src.sql_engine")
 sql_pipeline = importlib.import_module("src.sql_pipeline")
@@ -93,8 +93,8 @@ def initialise(count=1000):
     data_router.route_data()
     
     print("[*] SQL Pipeline...")
-    engine = sql_engine.SQLEngine()
-    sql_pipeline.run_sql_pipeline(engine)
+    #engine = sql_engine.SQLEngine()
+    #sql_pipeline.run_sql_pipeline(engine)
 
 
 def fetch(count=100):
@@ -112,8 +112,8 @@ def fetch(count=100):
     data_router.route_data()
 
     print("[*] SQL Pipeline Insert...")
-    engine = sql_engine.SQLEngine()
-    sql_pipeline.run_sql_pipeline(engine)
+    #engine = sql_engine.SQLEngine()
+    #sql_pipeline.run_sql_pipeline(engine)
 
 
 def wait_for_server(url="http://127.0.0.1:8000/"):
@@ -142,7 +142,10 @@ def main():
     count = int(sys.argv[2]) if len(sys.argv) > 2 else (1000 if command == 'initialise' else 100)
 
     api_process = start_api()
-    wait_for_server()
+    if not wait_for_server():
+        print("[X] Error: API server did not start in time.")
+        api_process.terminate()
+        sys.exit(1)
 
     try:
         if command == "initialise":
