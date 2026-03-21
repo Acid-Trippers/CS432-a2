@@ -18,7 +18,7 @@ import logging
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
-from src.config import DATA_DIR, METADATA_FILE
+from src.config import METADATA_FILE
 from src.sql_schema_definer import SQLSchemaBuilder
 
 logging.basicConfig(level=logging.INFO)

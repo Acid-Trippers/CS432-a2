@@ -33,7 +33,7 @@ except ImportError:
     print("[!] SQLAlchemy not installed. Install with: pip install sqlalchemy")
     raise
 
-from src.config import DATA_DIR, METADATA_FILE
+from src.config import DATA_DIR, METADATA_FILE, DATABASE_URL
 
 Base = declarative_base()
 
@@ -124,8 +124,7 @@ class SQLSchemaBuilder:
 
     def __init__(self, database_url: str = None):
         if database_url is None:
-            db_path = os.path.join(DATA_DIR, "engine.db")
-            database_url = f"sqlite:///{db_path}"
+            database_url = DATABASE_URL  # from config — Postgres in Docker, SQLite locally
 
         self.database_url = database_url
         self.engine = None
