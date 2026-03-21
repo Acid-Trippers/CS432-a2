@@ -54,7 +54,12 @@ def processMongoData(mongoData, strategyMap, dbInstance):
     mainCollection = dbInstance["main_records"]
     
     for record in mongoData:
+        extractedRecordId = record.pop("record_id", None)
         processedRecord = processNode(record, "", dbInstance, strategyMap)
+        
+        if extractedRecordId is not None:
+            processedRecord["_id"] = extractedRecordId
+            
         mainCollection.insert_one(processedRecord)
 
 def runMongoEngine():
