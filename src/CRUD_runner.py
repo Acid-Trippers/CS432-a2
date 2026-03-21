@@ -105,7 +105,7 @@ def analyze_query_databases(parsed_query):
         "databases_needed": list(databases_needed)
     }
     
-def query_checker():
+def query_runner():
     parsed_query = query_parser()
     
     if parsed_query:
@@ -142,7 +142,4 @@ def query_checker():
             print(f"{'='*60}\n")
 
 if __name__ == "__main__":
-    query_checker()
-        
-        
-        
+    query_runner()

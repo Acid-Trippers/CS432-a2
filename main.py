@@ -24,6 +24,8 @@ data_router = importlib.import_module("src.06_router")
 sql_schema_definer = importlib.import_module("src.sql_schema_definer")
 sql_engine = importlib.import_module("src.sql_engine")
 sql_pipeline = importlib.import_module("src.sql_pipeline")
+crud_json_reader = importlib.import_module("src.CRUD_json_reader")
+crud_runner = importlib.import_module("src.CRUD_runner")
 
 
 def start_docker():
@@ -270,6 +272,19 @@ def fetch(count=100):
 # Removed redundant wait_for_server function
 
 
+def query():
+    if not os.path.exists(METADATA_FILE):
+        print("[X] ERROR: No metadata found. Run 'initialise' first.")
+        return
+
+    print("\n[*] Starting Query Operations...")
+    
+    # 1. Provide UI to get a valid query and save it to query.json
+    crud_json_reader.main()
+    
+    # 2. Parse query.json and execute the query operation across databases
+    crud_runner.query_runner()
+
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else project_config.DEFAULT_COMMAND
     count = int(sys.argv[2]) if len(sys.argv) > 2 else (
@@ -291,6 +306,8 @@ def main():
             initialise(count)
         elif command == "fetch":
             fetch(count)
+        elif command == "query":
+            query()
         elif command == "resume":
             last_step = get_last_checkpoint()
             if not last_step:
