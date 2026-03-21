@@ -19,7 +19,7 @@ import os
 import uuid
 from typing import Dict, Any, List, Set, Union
 from collections import defaultdict
-from config import INITIAL_SCHEMA_FILE, RECEIVED_DATA_FILE, CLEANED_DATA_FILE, BUFFER_FILE
+from src.config import INITIAL_SCHEMA_FILE, RECEIVED_DATA_FILE, CLEANED_DATA_FILE, BUFFER_FILE
 
 class DataCleaner:
     def __init__(self, schema_file: str = INITIAL_SCHEMA_FILE):

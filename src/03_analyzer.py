@@ -13,7 +13,7 @@ import os
 import json
 from typing import Dict, Any, List
 from collections import defaultdict
-from config import DATA_DIR, CLEANED_DATA_FILE, ANALYZED_SCHEMA_FILE
+from src.config import DATA_DIR, CLEANED_DATA_FILE, ANALYZED_SCHEMA_FILE
 
 
 class DataAnalyzer:

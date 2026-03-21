@@ -7,7 +7,7 @@
 import json
 import os
 import sys
-from config import INITIAL_SCHEMA_FILE
+from src.config import INITIAL_SCHEMA_FILE
 
 PRIMITIVES = ["string", "int", "float", "bool"]
 

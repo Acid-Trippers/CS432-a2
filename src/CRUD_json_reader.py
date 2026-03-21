@@ -1,6 +1,6 @@
 import json
 import sys
-from config import QUERY_FILE
+from src.config import QUERY_FILE
 import os
 
 def validate_structure(data, path="root"):

@@ -1,6 +1,6 @@
 import json
 import os
-from config import INITIAL_SCHEMA_FILE, ANALYZED_SCHEMA_FILE, METADATA_FILE
+from src.config import INITIAL_SCHEMA_FILE, ANALYZED_SCHEMA_FILE, METADATA_FILE
 
 def merge_metadata():
     if not os.path.exists(INITIAL_SCHEMA_FILE):

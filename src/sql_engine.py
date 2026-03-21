@@ -18,8 +18,8 @@ import logging
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
-from config import DATA_DIR, METADATA_FILE
-from sql_schema_definer import SQLSchemaBuilder
+from src.config import DATA_DIR, METADATA_FILE
+from src.sql_schema_definer import SQLSchemaBuilder
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

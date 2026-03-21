@@ -14,8 +14,8 @@ import argparse
 import json
 from typing import Tuple
 
-from config import SQL_DATA_FILE, DATA_DIR, DATABASE_URL, METADATA_FILE
-from sql_engine import SQLEngine
+from src.config import SQL_DATA_FILE, DATA_DIR, DATABASE_URL, METADATA_FILE
+from src.sql_engine import SQLEngine
 
 
 def archive_processed_data(source_file: str, archive_file: str):

@@ -15,7 +15,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
-from config import DATA_DIR, METADATA_FILE
+from src.config import DATA_DIR, METADATA_FILE
 
 # Thresholds for SQL suitability
 SQL_CRITERIA = {

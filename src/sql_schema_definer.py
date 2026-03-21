@@ -27,7 +27,7 @@ except ImportError:
     print("[!] SQLAlchemy not installed. Install with: pip install sqlalchemy")
     raise
 
-from config import DATA_DIR, METADATA_FILE
+from src.config import DATA_DIR, METADATA_FILE
 
 # Global SQLAlchemy setup
 Base = declarative_base()

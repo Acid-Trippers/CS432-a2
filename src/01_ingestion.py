@@ -10,7 +10,7 @@ import os
 import httpx
 import asyncio
 import sys
-from config import RECEIVED_DATA_FILE, COUNTER_FILE
+from src.config import RECEIVED_DATA_FILE, COUNTER_FILE
 import datetime
 
 

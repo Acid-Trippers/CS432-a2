@@ -2,7 +2,7 @@ import json
 import os
 from typing import Dict, List
 
-from config import CLEANED_DATA_FILE, DATA_DIR
+from src.config import CLEANED_DATA_FILE, DATA_DIR
 
 
 FIELD_METADATA_FILE = os.path.join(DATA_DIR, "field_metadata.json")
