@@ -91,9 +91,9 @@ async def main():
                 return
 
             print(f"[*] System Ready. Fetching {args.records} additional records...")
-            run_script("ingestion", [str(args.records)])
+            run_script("01_ingestion", [str(args.records)])
             # Step C: Clean
-            run_script("cleaner")
+            run_script("02_cleaner")
             # Step D: Analyze
             run_script("analyzer")
             # Step E: Validate
