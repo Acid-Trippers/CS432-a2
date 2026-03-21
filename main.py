@@ -49,7 +49,7 @@ async def main():
     
     api_process = start_api()
     # Wait a moment for the API to be ready
-    time.sleep(2)
+    time.sleep(1)
 
     try:
         if args.command == 'initialise':
@@ -69,13 +69,13 @@ async def main():
             print("[!] Environment reset.")
             
             # Step A: Get User Schema
-            run_script("schema_definition")
+            run_script("00_schema_definition")
             
             # Step B: Get first batch of data
-            run_script("ingestion", [str(args.records)])
+            run_script("01_ingestion", [str(args.records)])
 
             # Step C: Clean Data (Padding & Ripping)
-            run_script("cleaner")
+            run_script("02_cleaner")
 
             # Step D: Analyze Data (Statistical Profiling)
             run_script("analyzer")

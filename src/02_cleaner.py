@@ -1,3 +1,18 @@
+"""
+Loads the incoming raw JSON data (received_data.json) and structurally aligns it to the expected predefined data schema (initial_schema.json).
+
+- Canonical Key Mapping & Fuzzy Matching: Maps incoming arbitrary keys to standard schema shapes 
+   using direct, case-insensitive, and snake_case transformations.
+- Value Sanitization: Strips whitespaces from strings and converts purely empty strings to `None`.
+- Type Casting: Attempts to gracefully cast incoming values to the native types dictated by the template 
+   schema (int, float, bool, str) while letting values safely pass through if casting fails.
+- Schema Padding: Injects trailing fields from the schema that are completely absent in the 
+   data payload, forcing them to `null` or empty equivalents.
+- Quarantine (Buffering) & Lossless Ripping: Captures unmapped extraneous fields into a secondary 
+   quarantine file (buffer.json) for auditing, while still retaining them recursively 
+   in the output `cleaned_data.json` to guarantee zero data loss.
+"""
+
 import re
 import json
 import os
@@ -73,6 +88,35 @@ class DataCleaner:
             return None if cleaned == "" else cleaned
         return value
 
+    def _try_cast(self, value: Any, expected_type_example: Any) -> Any:
+        # If no strict type to infer from, or value is None, return as-is
+        if expected_type_example is None or value is None:
+            return value
+            
+        expected_type = type(expected_type_example)
+        # If it's already the expected type, let it pass
+        if isinstance(value, expected_type):
+            return value
+            
+        # Attempt to cast
+        try:
+            if expected_type is int:
+                return int(value)
+            elif expected_type is float:
+                return float(value)
+            elif expected_type is bool:
+                if isinstance(value, str):
+                    lower = value.lower()
+                    if lower in ('true', '1', 'yes', 'y'): return True
+                    if lower in ('false', '0', 'no', 'n'): return False
+                return bool(value)
+            elif expected_type is str:
+                return str(value)
+        except (ValueError, TypeError):
+            pass # If casting fails, we silently let the original data pass through
+            
+        return value
+
     def clean_recursive(self, data: Dict, schema: Dict, parent_id: str) -> Dict:
         """
         Recursively cleans data against schema.
@@ -103,12 +147,13 @@ class DataCleaner:
                     template = schema_val[0]
                     cleaned_node[canonical_key] = [
                         self.clean_recursive(item, template, parent_id) if isinstance(item, dict) and isinstance(template, dict)
-                        else self.sanitize_value(item)
+                        else self._try_cast(self.sanitize_value(item), template)
                         for item in data_val
                     ]
                 else:
                     # Scalar value
-                    cleaned_node[canonical_key] = self.sanitize_value(data_val)
+                    sanitized_val = self.sanitize_value(data_val)
+                    cleaned_node[canonical_key] = self._try_cast(sanitized_val, schema_val)
             else:
                 # Ripper logic: Field not in schema
                 self.buffer.append({
@@ -116,6 +161,17 @@ class DataCleaner:
                     "field": data_key,
                     "value": data_val
                 })
+                # Preserve unmatched fields to prevent data loss
+                if isinstance(data_val, dict):
+                    cleaned_node[data_key] = self.clean_recursive(data_val, {}, parent_id)
+                elif isinstance(data_val, list):
+                    cleaned_node[data_key] = [
+                        self.clean_recursive(item, {}, parent_id) if isinstance(item, dict)
+                        else self.sanitize_value(item)
+                        for item in data_val
+                    ]
+                else:
+                    cleaned_node[data_key] = self.sanitize_value(data_val)
         
         # 2. Padding: Check for missing keys in schema
         for schema_key, schema_val in schema.items():

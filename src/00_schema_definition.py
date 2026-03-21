@@ -1,3 +1,9 @@
+"""
+-Checks if the initial schema file exists. If it does, offers to validate it or overwrite with new paste.
+-If it doesn't, forces the user into paste mode.
+-Validates the structure of the JSON to ensure it follows the Mirror Structure rules.
+-If valid, saves the schema to initial_schema.json. If not, exits with an error code so main.py can stop the initialization process.
+"""
 import json
 import os
 import sys
