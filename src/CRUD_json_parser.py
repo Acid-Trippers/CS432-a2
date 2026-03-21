@@ -1,5 +1,6 @@
 import json
 from .config import QUERY_FILE, METADATA_FILE
+from src.CRUD_runner import create_operation, read_operation, update_operation, delete_operation
 
 def query_parser():
     """Parse the query.json and interpret what it means."""
@@ -88,15 +89,28 @@ def analyze_query_databases(parsed_query):
         "databases_needed": list(databases_needed)
     }
     
-def run_query():
+def query_checker():
     parsed_query = query_parser()
     
     if parsed_query:
         db_analysis = analyze_query_databases(parsed_query)
         print(f"\nAnalysis Result: {db_analysis}")
         
+    match parsed_query["operation"]:
+        case "CREATE":
+            create_operation(parsed_query, db_analysis)
+            print("Sucess")
+        case "READ":
+            read_operation(parsed_query, db_analysis)
+            print("Sucess")
+        case "UPDATE":
+            update_operation(parsed_query, db_analysis)
+            print("Sucess")
+        case "DELETE":
+            delete_operation(parsed_query, db_analysis)
+            print("Sucess")
 
 if __name__ == "__main__":
-    run_query()
+    query_checker()
         
         
