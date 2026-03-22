@@ -501,11 +501,8 @@ def update_operation(parsed_query, db_analysis):
                     Model.record_id.in_(matching_record_ids["SQL"])
                 )
                 count = update_query.count()
-                for field_name, field_value in sql_updates.items():
-                    try:
-                        update_query.update({getattr(Model, field_name): field_value})
-                    except Exception as e:
-                        print(f"[SQL] Could not update field {field_name}: {e}")
+                update_dict = {field_name: field_value for field_name, field_value in sql_updates.items()}
+                update_query.update(update_dict, synchronize_session=False)
                 sql_engine.session.commit()
                 updated_summary["SQL"] = count
                 total_updated += count
