@@ -4,6 +4,8 @@ _(CS432 - Databases Assignment 2)_
 
 This repository implements an intelligent, hybrid database framework that dynamically ingests, categorizes, normalizes, and routes JSON data across SQL (PostgreSQL) and NoSQL (MongoDB) databases. It completely orchestrates database schema creation, intelligent row/document structures, relational setups, and data mapping—without relying on static predefined schemas.
 
+Video Link : https://drive.google.com/file/d/1XqJ_odHhQd4EHq1mvyG3R2bKbJfo11TF/view?usp=sharing
+
 ## Project Overview
 
 The pipeline detects when data is highly recursive/nested and processes it accordingly:
