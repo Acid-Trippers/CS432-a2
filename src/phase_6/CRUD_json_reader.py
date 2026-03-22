@@ -57,9 +57,9 @@ def validate_structure(data, path="root"):
     
     elif operation == "DELETE":
         if "filters" not in data:
-            raise ValueError(f"DELETE operation requires 'filters' field.")
-        if not isinstance(data["filters"], dict) or not data["filters"]:
-            raise ValueError(f"Field 'filters' must be a non-empty object.")
+            data["filters"] = {}  # allow empty filters — deletes all records
+        elif not isinstance(data["filters"], dict):
+            raise ValueError(f"Field 'filters' must be a dict.")
 
 def store_query_to_json(request):
     """Stores the validated CRUD request to query.json in the data directory."""
