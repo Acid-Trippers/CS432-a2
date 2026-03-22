@@ -182,6 +182,12 @@ class SQLSchemaBuilder:
             'main_records_id': Column(Integer, ForeignKey('main_records.record_id'), nullable=False),
         }
 
+        for sub_name, meta in self.analyzer.metadata.items():
+            if meta.get('parent_path') == field_name and not meta.get('is_nested') and not meta.get('is_array') and meta.get('decision') == 'SQL':
+                col_name = sub_name.split('.')[-1]
+                sql_type = self.analyzer._map_type_to_sql(meta.get('dominant_type', 'string'))
+                attrs[col_name] = Column(sql_type, nullable=True)
+
         self.models[table_name] = type(table_name.capitalize(), (Base,), attrs)
 
     def _create_array_table(self, field_name: str):
