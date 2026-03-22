@@ -1,25 +1,42 @@
 import json
 import os
 import time
-from src.config import DATA_DIR, METADATA_FILE, COUNTER_FILE
+from src.config import DATA_DIR, METADATA_FILE, COUNTER_FILE, MONGO_URI, MONGO_DB_NAME
 from src.phase_5.sql_engine import SQLEngine
 from src.phase_5.mongo_engine import determineMongoStrategy, processNode
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 
 # Initialize SQL Engine gracefully (non-blocking if PostgreSQL unavailable)
 sql_engine = SQLEngine()
+sql_available = False
 try:
     sql_engine.initialize()
     sql_available = True
+    print("[SQL] Engine initialized successfully")
 except Exception as e:
     print(f"[WARNING] SQL Engine initialization failed: {str(e)[:100]}...")
     print("[WARNING] Continuing with MongoDB and Unknown data sources only")
-    sql_available = False
 
-mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-db_name = os.getenv("MONGO_DB_NAME", "cs432_db")
-mongo_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=2000)
-mongo_db = mongo_client[db_name]
+# Initialize MongoDB connection with authentication
+mongo_db = None
+mongo_available = False
+try:
+    print(f"[MONGO] Connecting to {MONGO_URI.replace(MONGO_URI.split('@')[0].split('//')[1], '***')}...")
+    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    # Test the connection by pinging
+    mongo_client.admin.command('ping')
+    mongo_db = mongo_client[MONGO_DB_NAME]
+    mongo_available = True
+    print(f"[MONGO] Connected to database '{MONGO_DB_NAME}' successfully")
+except errors.ServerSelectionTimeoutError:
+    print(f"[WARNING] MongoDB connection timeout - server not reachable at {MONGO_URI}")
+    print("[WARNING] MongoDB features will be unavailable")
+except errors.OperationFailure as e:
+    print(f"[WARNING] MongoDB authentication failed: {e}")
+    print("[WARNING] MongoDB features will be unavailable")
+except Exception as e:
+    print(f"[WARNING] MongoDB initialization failed: {str(e)[:150]}")
+    print("[WARNING] MongoDB features will be unavailable")
 
 def merge_results_by_record_id(results_by_db):
     """
@@ -122,7 +139,7 @@ def read_operation(parsed_query, db_analysis):
         matching_record_ids["SQL"] = []
     
     # Query MONGO for matching record_ids in UPDATE
-    if "MONGO" in databases_needed:
+    if "MONGO" in databases_needed and mongo_available:
         try:
             collection = mongo_db[entity]
             mongo_filters = {k: v for k, v in filters.items() if field_locations.get(k) == "MONGO"}
@@ -136,6 +153,9 @@ def read_operation(parsed_query, db_analysis):
         except Exception as e:
             print(f"[MONGO] Error in Phase 1: {e}")
             matching_record_ids["MONGO"] = []
+    elif "MONGO" in databases_needed:
+        print(f"[MONGO] Skipped (MongoDB not available)")
+        matching_record_ids["MONGO"] = []
     
     # Query Unknown for matching record_ids
     if "Unknown" in databases_needed:
@@ -191,7 +211,7 @@ def read_operation(parsed_query, db_analysis):
         results["SQL"] = []
     
     # Fetch from MONGO
-    if "MONGO" in databases_needed and matching_record_ids.get("MONGO"):
+    if "MONGO" in databases_needed and matching_record_ids.get("MONGO") and mongo_available:
         try:
             collection = mongo_db[entity]
             # Important: Use _id field for MONGO queries since record_id is stored as _id
@@ -341,14 +361,17 @@ def create_operation(parsed_query, db_analysis):
     
     # Insert into MongoDB
     if len(mongo_payload) > 1:
-        try:
-            processed_mongo_record = processNode(mongo_payload, "", mongo_db, strategy_map)
-            mongo_db[entity].insert_one(processed_mongo_record)
-            results["inserted_into"].append("MONGO")
-            print(f"[MongoDB] Successfully inserted document into '{entity}' collection")
-        except Exception as e:
-            results["mongo_error"] = str(e)
-            print(f"[MongoDB] Error in insertion: {e}")
+        if mongo_available:
+            try:
+                processed_mongo_record = processNode(mongo_payload, "", mongo_db, strategy_map)
+                mongo_db[entity].insert_one(processed_mongo_record)
+                results["inserted_into"].append("MONGO")
+                print(f"[MONGO] Successfully inserted document into '{entity}' collection")
+            except Exception as e:
+                results["mongo_error"] = str(e)
+                print(f"[MONGO] Error in insertion: {e}")
+        else:
+            print(f"[MONGO] Skipped (MongoDB not available)")
 
     # Insert into Unknown buffer
     if len(unknown_payload) > 1:
@@ -557,7 +580,7 @@ def update_operation(parsed_query, db_analysis):
         updated_summary["SQL"] = 0
     
     # Update MONGO documents
-    if "MONGO" in databases_needed and matching_record_ids.get("MONGO") and mongo_updates:
+    if "MONGO" in databases_needed and matching_record_ids.get("MONGO") and mongo_updates and mongo_available:
         try:
             collection = mongo_db[entity]
             # Important: Use _id for MongoDB queries since record_id is stored as _id
@@ -571,7 +594,9 @@ def update_operation(parsed_query, db_analysis):
         except Exception as e:
             print(f"[MONGO] Error in Phase 2: {e}")
             updated_summary["MONGO"] = 0
-    else:
+    elif "MONGO" in databases_needed:
+        if not mongo_available:
+            print(f"[MONGO] Skipped (MongoDB not available)")
         updated_summary["MONGO"] = 0
     
     # Update Unknown records
@@ -679,7 +704,7 @@ def delete_operation(parsed_query, db_analysis):
         matching_record_ids["SQL"] = []
     
     # Query MONGO for matching record_ids
-    if "MONGO" in databases_needed:
+    if "MONGO" in databases_needed and mongo_available:
         try:
             collection = mongo_db[entity]
             mongo_filters = {k: v for k, v in filters.items() if field_locations.get(k) == "MONGO"}
@@ -693,6 +718,9 @@ def delete_operation(parsed_query, db_analysis):
         except Exception as e:
             print(f"[MONGO] Error in Phase 1: {e}")
             matching_record_ids["MONGO"] = []
+    elif "MONGO" in databases_needed:
+        print(f"[MONGO] Skipped (MongoDB not available)")
+        matching_record_ids["MONGO"] = []
     
     # Query Unknown for matching record_ids
     if "Unknown" in databases_needed:
@@ -749,7 +777,7 @@ def delete_operation(parsed_query, db_analysis):
         deleted_summary["SQL"] = 0
     
     # Delete from MONGO
-    if "MONGO" in databases_needed and matching_record_ids.get("MONGO"):
+    if "MONGO" in databases_needed and matching_record_ids.get("MONGO") and mongo_available:
         try:
             collection = mongo_db[entity]
             # Important: Use _id for MongoDB queries since record_id is stored as _id
@@ -760,8 +788,9 @@ def delete_operation(parsed_query, db_analysis):
         except Exception as e:
             print(f"[MONGO] Error in Phase 2: {e}")
             deleted_summary["MONGO"] = 0
-    else:
-        deleted_summary["MongoDB"] = 0
+    elif "MONGO" in databases_needed:
+        print(f"[MONGO] Skipped (MongoDB not available)")
+        deleted_summary["MONGO"] = 0
     
     # Delete from Unknown
     if "Unknown" in databases_needed and matching_record_ids.get("Unknown"):
