@@ -7,6 +7,7 @@ Usage:
     python starter.py end     — stops all Docker containers cleanly
 """
 
+import os
 import sys
 import socket
 import subprocess
@@ -27,7 +28,35 @@ def wait_for_port(port, host='localhost', timeout=30):
 
 
 def start():
-    print("[*] Launching Docker Infrastructure...")
+    print("[*] Checking if Docker Desktop is running...")
+    try:
+        # Pings the engine to see if it's "Green"
+        subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("[+] Docker Desktop is already running.")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("[!] Docker Engine is off. Attempting to launch Docker Desktop...")
+        docker_path = r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
+        if os.path.exists(docker_path):
+            subprocess.Popen([docker_path, "--minimized"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("[*] Launching Docker Desktop. Waiting for engine readiness (up to 2 mins)...")
+            
+            # Poll for engine readiness
+            ready = False
+            for _ in range(60): 
+                try:
+                    subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    ready = True
+                    break
+                except:
+                    time.sleep(2)
+            if not ready:
+                print("[X] Docker Engine failed to start. Please open it manually.")
+                sys.exit(1)
+            print("[+] Docker Engine is now Ready.")
+            time.sleep(3)
+        else:
+            print(f"[X] Docker Desktop not found at {docker_path}. Please start it manually.")
+            sys.exit(1)
     try:
         subprocess.run(
             ["docker-compose", "-f", project_config.DOCKER_COMPOSE_FILE, "up", "-d"],
