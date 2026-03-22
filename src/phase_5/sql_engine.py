@@ -76,10 +76,14 @@ class DataNormalizer:
                 items = value if isinstance(value, list) else [value]
 
                 if field_meta.get('array_content_type') == 'object':
-                    nested_data[table_name] = [
-                        {'data': json.dumps(item) if not isinstance(item, str) else item, 'position': idx}
-                        for idx, item in enumerate(items)
-                    ]
+                    # 1NF constraint: Map object fields to separate columns instead of dumping as JSON
+                    nested_data[table_name] = []
+                    for idx, item in enumerate(items):
+                        if isinstance(item, dict):
+                            record_data = {'position': idx}
+                            for sub_key, sub_val in item.items():
+                                record_data[sub_key] = sub_val
+                            nested_data[table_name].append(record_data)
                 else:
                     nested_data[table_name] = [
                         {

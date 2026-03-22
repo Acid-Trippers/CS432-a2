@@ -202,7 +202,12 @@ class SQLSchemaBuilder:
 
         field_meta = self.analyzer.metadata.get(field_name, {})
         if field_meta.get('array_content_type') == 'object':
-            attrs['data'] = Column(JSON, nullable=False)
+            # 1NF constraint: Flatten array objects into atomic columns rather than JSON
+            for sub_name, meta in self.analyzer.metadata.items():
+                if meta.get('parent_path') == field_name and not meta.get('is_nested') and not meta.get('is_array') and meta.get('decision') == 'SQL':
+                    col_name = sub_name.split('.')[-1]
+                    sql_type = self.analyzer._map_type_to_sql(meta.get('dominant_type', 'string'))
+                    attrs[col_name] = Column(sql_type, nullable=True)
         else:
             attrs['value'] = Column(String(255), nullable=False)
             attrs['value_type'] = Column(String(50), nullable=True)

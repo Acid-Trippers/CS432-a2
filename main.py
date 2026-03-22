@@ -215,8 +215,8 @@ def initialise(count=1000):
     
     print("[*] SQL Pipeline...")
     set_checkpoint("sql")
-    # engine_sql = sql_engine.SQLEngine()
-    # sql_pipeline.run_sql_pipeline(engine_sql)
+    engine_sql = sql_engine.SQLEngine()
+    sql_pipeline.run_sql_pipeline(engine_sql)
 
 
 def fetch(count=100):
@@ -258,8 +258,8 @@ def fetch(count=100):
             print(f"    >>> Batch Success: {batch_stats['sql']} records to SQL, {batch_stats['mongo']} to Mongo.")
         
         # 5. SQL Pipeline (Optional: uncomment if needed per batch)
-        # engine_sql = sql_engine.SQLEngine()
-        # sql_pipeline.run_sql_pipeline(engine_sql)
+        engine_sql = sql_engine.SQLEngine()
+        sql_pipeline.run_sql_pipeline(engine_sql)
 
         remaining -= current_batch
         print(f"[+] Chunk processed. Total global records: {n_old + current_batch}")
@@ -290,13 +290,15 @@ def main():
         else project_config.FETCH_COUNT
     )
 
-    # start_docker()
+    start_docker()
+    print("[*] Getting Docker environment ready...")
+    time.sleep(project_config.DOCKER_STARTUP_TIMEOUT)
     api_process = start_api()
 
     if not wait_for_api():
         print("[X] API server failed to start.")
         api_process.terminate()
-        # stop_docker()
+        stop_docker()
         sys.exit(1)
 
     try:
@@ -337,7 +339,7 @@ def main():
             sys.exit(1)
     finally:
         api_process.terminate()
-        #stop_docker()
+        stop_docker()
 
 
 if __name__ == "__main__":
