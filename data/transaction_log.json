@@ -311,5 +311,125 @@
     "metadata": {
       "record_id": 1252
     }
+  },
+  {
+    "transaction_id": "0253e14e-b60b-4a33-868e-901908b24ddb",
+    "operation": "CREATE",
+    "entity": "main_records",
+    "participants": [
+      "SQL",
+      "MONGO"
+    ],
+    "state": "rolled_back",
+    "started_at": "2026-04-04T09:38:21.577804Z",
+    "ended_at": "2026-04-04T09:38:21.584016Z",
+    "events": [
+      {
+        "time": "2026-04-04T09:38:21.577804Z",
+        "type": "transaction_started",
+        "payload": {}
+      },
+      {
+        "time": "2026-04-04T09:38:21.577804Z",
+        "type": "step_apply_started",
+        "payload": {
+          "step": "create_sql_record",
+          "participant": "SQL"
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.584016Z",
+        "type": "transaction_apply_failed",
+        "payload": {
+          "error": "SQL insert returned None",
+          "applied_steps": []
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.584016Z",
+        "type": "transaction_rolled_back",
+        "payload": {}
+      }
+    ],
+    "metadata": {
+      "record_id": 1000
+    }
+  },
+  {
+    "transaction_id": "20d374dd-bc44-45f6-9825-5b2a92f8db56",
+    "operation": "CREATE",
+    "entity": "main_records",
+    "participants": [
+      "SQL",
+      "MONGO"
+    ],
+    "state": "rolled_back",
+    "started_at": "2026-04-04T09:38:21.621582Z",
+    "ended_at": "2026-04-04T09:38:21.635004Z",
+    "events": [
+      {
+        "time": "2026-04-04T09:38:21.621582Z",
+        "type": "transaction_started",
+        "payload": {}
+      },
+      {
+        "time": "2026-04-04T09:38:21.621582Z",
+        "type": "step_apply_started",
+        "payload": {
+          "step": "create_sql_record",
+          "participant": "SQL"
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.626582Z",
+        "type": "step_apply_succeeded",
+        "payload": {
+          "step": "create_sql_record",
+          "participant": "SQL"
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.626582Z",
+        "type": "step_apply_started",
+        "payload": {
+          "step": "create_mongo_document",
+          "participant": "MONGO"
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.629489Z",
+        "type": "transaction_apply_failed",
+        "payload": {
+          "error": "E11000 duplicate key error collection: cs432_db.main_records index: _id_ dup key: { _id: 1001 }, full error: {'index': 0, 'code': 11000, 'errmsg': 'E11000 duplicate key error collection: cs432_db.main_records index: _id_ dup key: { _id: 1001 }', 'keyPattern': {'_id': 1}, 'keyValue': {'_id': 1001}}",
+          "applied_steps": [
+            "create_sql_record"
+          ]
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.629489Z",
+        "type": "step_compensate_started",
+        "payload": {
+          "step": "create_sql_record",
+          "participant": "SQL"
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.635004Z",
+        "type": "step_compensate_succeeded",
+        "payload": {
+          "step": "create_sql_record",
+          "participant": "SQL"
+        }
+      },
+      {
+        "time": "2026-04-04T09:38:21.635004Z",
+        "type": "transaction_rolled_back",
+        "payload": {}
+      }
+    ],
+    "metadata": {
+      "record_id": 1001
+    }
   }
 ]

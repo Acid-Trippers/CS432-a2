@@ -13,6 +13,7 @@ from src.config import MONGO_URI, MONGO_DB_NAME, COUNTER_FILE
 import time
 from sqlalchemy import text, inspect as sql_inspect
 import threading
+import asyncio
 
 sql_engine = SQLEngine()
 try:
@@ -323,6 +324,110 @@ def dirty_read_test():
         }
     except Exception as e:
         return {"test": "dirty_read_prevention", "passed": False, "error": str(e)[:100]}
+
+
+def concurrent_read_write_isolation_test(readers: int = 5, writers: int = 3):
+    """
+    Async mixed workload isolation test.
+
+    Scenario:
+    1. Multiple writer transactions insert rows but hold commit briefly.
+    2. Reader tasks query counts before commit (should not include uncommitted rows).
+    3. Readers query again after commit (should include committed rows).
+    """
+    try:
+        model = _get_main_model()
+        if not model:
+            return {
+                "test": "concurrent_read_write_isolation",
+                "passed": False,
+                "error": "main_records model unavailable",
+            }
+
+        base_count = _sql_count()
+        base_id = max(_get_counter_value(), int(time.time()) % 100000)
+        record_ids = [base_id + i for i in range(writers)]
+
+        start_event = threading.Event()
+        commit_event = threading.Event()
+        started_writers = 0
+        started_lock = threading.Lock()
+
+        def writer(record_id: int):
+            nonlocal started_writers
+            session = _new_sql_session()
+            try:
+                session.execute(
+                    text("INSERT INTO main_records (record_id, device_id) VALUES (:rid, :device_id)"),
+                    {"rid": record_id, "device_id": f"iso_writer_{record_id}"},
+                )
+
+                with started_lock:
+                    started_writers += 1
+                    if started_writers == writers:
+                        start_event.set()
+
+                commit_event.wait(timeout=3)
+                session.commit()
+            except Exception:
+                session.rollback()
+            finally:
+                session.close()
+
+        def reader_count():
+            return _sql_count()
+
+        async def run_test():
+            writer_tasks = [asyncio.to_thread(writer, rid) for rid in record_ids]
+            writer_group = asyncio.gather(*writer_tasks)
+
+            await asyncio.to_thread(start_event.wait, 2)
+
+            pre_commit_reads = await asyncio.gather(
+                *[asyncio.to_thread(reader_count) for _ in range(readers)]
+            )
+
+            commit_event.set()
+            await writer_group
+
+            post_commit_reads = await asyncio.gather(
+                *[asyncio.to_thread(reader_count) for _ in range(readers)]
+            )
+
+            return pre_commit_reads, post_commit_reads
+
+        pre_commit_reads, post_commit_reads = asyncio.run(run_test())
+
+        after_count = _sql_count()
+        expected_after = base_count + writers
+
+        pre_commit_ok = all(read == base_count for read in pre_commit_reads)
+        post_commit_ok = all(read == expected_after for read in post_commit_reads)
+        final_ok = after_count == expected_after
+
+        return {
+            "test": "concurrent_read_write_isolation",
+            "passed": pre_commit_ok and post_commit_ok and final_ok,
+            "base_count": base_count,
+            "expected_after": expected_after,
+            "after_count": after_count,
+            "readers": readers,
+            "writers": writers,
+            "pre_commit_reads": pre_commit_reads,
+            "post_commit_reads": post_commit_reads,
+        }
+    except Exception as e:
+        return {
+            "test": "concurrent_read_write_isolation",
+            "passed": False,
+            "error": str(e)[:150],
+        }
+    finally:
+        try:
+            for rid in locals().get("record_ids", []):
+                _delete_sql_by_record_id(rid)
+        except Exception:
+            pass
 
 
 # ==================== ADVANCED DURABILITY ====================
