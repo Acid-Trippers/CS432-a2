@@ -1,9 +1,17 @@
 import json
 import os
 import time
-from src.config import DATA_DIR, METADATA_FILE, COUNTER_FILE, MONGO_URI, MONGO_DB_NAME
+from src.config import (
+    DATA_DIR,
+    METADATA_FILE,
+    COUNTER_FILE,
+    MONGO_URI,
+    MONGO_DB_NAME,
+    TRANSACTION_LOG_FILE,
+)
 from src.phase_5.sql_engine import SQLEngine
 from src.phase_5.mongo_engine import determineMongoStrategy, processNode
+from src.phase_6.transaction_coordinator import TransactionCoordinator, TransactionStep
 from pymongo import MongoClient, errors
 
 # Initialize SQL Engine gracefully (non-blocking if PostgreSQL unavailable)
@@ -36,6 +44,8 @@ except errors.OperationFailure as e:
 except Exception as e:
     print(f"[WARNING] MongoDB initialization failed: {str(e)[:150]}")
     print("[WARNING] MongoDB features will be unavailable")
+
+tx_coordinator = TransactionCoordinator(TRANSACTION_LOG_FILE)
 
 def merge_results_by_record_id(results_by_db):
     """
@@ -82,6 +92,88 @@ def merge_results_by_record_id(results_by_db):
                 merged[record_id]["_source"].append("Unknown")
     
     return merged
+
+
+def _atomic_write_json(file_path, data):
+    temp_path = f"{file_path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, default=str)
+    os.replace(temp_path, file_path)
+
+
+def _unknown_data_file_path():
+    return os.path.join(DATA_DIR, "unknown_data.json")
+
+
+def _load_unknown_records():
+    unknown_file = _unknown_data_file_path()
+    if not os.path.exists(unknown_file):
+        return []
+
+    with open(unknown_file, "r", encoding="utf-8") as f:
+        content = f.read().strip()
+        if not content:
+            return []
+        data = json.loads(content)
+
+    if isinstance(data, list):
+        return data
+    return [data]
+
+
+def _write_unknown_records(records):
+    _atomic_write_json(_unknown_data_file_path(), records)
+
+
+def _sql_records_by_ids(entity, record_ids):
+    if not sql_available:
+        return []
+    if not record_ids:
+        return []
+
+    Model = sql_engine.models.get(entity)
+    if not Model:
+        return []
+
+    from sqlalchemy import inspect as sql_inspect
+
+    rows = (
+        sql_engine.session.query(Model)
+        .filter(Model.record_id.in_(record_ids))
+        .all()
+    )
+
+    return [
+        {col.name: getattr(row, col.name) for col in sql_inspect(Model).columns}
+        for row in rows
+    ]
+
+
+def _sql_delete_by_record_id(entity, record_id):
+    if not sql_available:
+        return
+    Model = sql_engine.models.get(entity)
+    if not Model:
+        return
+    sql_engine.session.query(Model).filter(Model.record_id == record_id).delete()
+    sql_engine.session.commit()
+
+
+def _sql_restore_records(entity, records):
+    if not sql_available:
+        return
+    Model = sql_engine.models.get(entity)
+    if not Model:
+        return
+
+    for record in records:
+        rid = record.get("record_id")
+        if rid is None:
+            continue
+        sql_engine.session.query(Model).filter(Model.record_id == rid).delete()
+        sql_engine.session.add(Model(**record))
+
+    sql_engine.session.commit()
 
 def read_operation(parsed_query, db_analysis):
     """
@@ -313,56 +405,118 @@ def create_operation(parsed_query, db_analysis):
     print("[PHASE 2] Executing database insertions...")
     print(f"{'─'*60}")
 
-    results = {"record_id": record_id, "inserted_into": []}
-
-    # FIX: always insert into SQL — even if no SQL fields, insert minimal {"record_id": N}
-    # so READ merge can find the record on both sides.
+    participants = []
     if sql_available:
-        try:
-            sql_engine.insert_record(sql_payload)
-            results["inserted_into"].append("SQL")
-            print(f"[SQL] Successfully inserted record {record_id}")
-        except Exception as e:
-            results["sql_error"] = str(e)
-            print(f"[SQL] Error in insertion: {e}")
+        participants.append("SQL")
     else:
-        print(f"[SQL] Skipped (SQL Engine not available)")
+        return {
+            "operation": "CREATE",
+            "entity": entity,
+            "status": "failed",
+            "error": "SQL participant unavailable",
+        }
 
-    # FIX: always insert into MongoDB — even if no Mongo fields, insert minimal {"_id": N}
-    # so READ merge can find the record on both sides.
     if mongo_available:
-        try:
-            processed_mongo_record = processNode(mongo_payload, "", mongo_db, strategy_map)
-            mongo_db[entity].insert_one(processed_mongo_record)
-            results["inserted_into"].append("MONGO")
-            print(f"[MONGO] Successfully inserted document into '{entity}' collection")
-        except Exception as e:
-            results["mongo_error"] = str(e)
-            print(f"[MONGO] Error in insertion: {e}")
+        participants.append("MONGO")
     else:
-        print(f"[MONGO] Skipped (MongoDB not available)")
+        return {
+            "operation": "CREATE",
+            "entity": entity,
+            "status": "failed",
+            "error": "MongoDB participant unavailable",
+        }
 
-    # Unknown buffer — only insert if there are actual unknown fields
-    if len(unknown_payload) > 1:
+    has_unknown_fields = len(unknown_payload) > 1
+    if has_unknown_fields:
+        participants.append("Unknown")
+
+    unknown_before = _load_unknown_records() if has_unknown_fields else []
+
+    def apply_sql_create():
+        inserted_id = sql_engine.insert_record(sql_payload)
+        if inserted_id is None:
+            raise RuntimeError("SQL insert returned None")
+        return inserted_id
+
+    def compensate_sql_create():
+        _sql_delete_by_record_id(entity, record_id)
+
+    def verify_sql_create(result):
+        return result is not None
+
+    def apply_mongo_create():
+        processed_mongo_record = processNode(mongo_payload, "", mongo_db, strategy_map)
+        return mongo_db[entity].insert_one(processed_mongo_record)
+
+    def compensate_mongo_create():
+        mongo_db[entity].delete_one({"_id": record_id})
+
+    def verify_mongo_create(result):
+        return getattr(result, "acknowledged", False)
+
+    steps = [
+        TransactionStep(
+            name="create_sql_record",
+            participant="SQL",
+            apply_fn=apply_sql_create,
+            compensate_fn=compensate_sql_create,
+            verify_fn=verify_sql_create,
+        ),
+        TransactionStep(
+            name="create_mongo_document",
+            participant="MONGO",
+            apply_fn=apply_mongo_create,
+            compensate_fn=compensate_mongo_create,
+            verify_fn=verify_mongo_create,
+        ),
+    ]
+
+    if has_unknown_fields:
+        def apply_unknown_create():
+            current = _load_unknown_records()
+            current.append(unknown_payload)
+            _write_unknown_records(current)
+            return True
+
+        def compensate_unknown_create():
+            _write_unknown_records(unknown_before)
+
+        steps.append(
+            TransactionStep(
+                name="create_unknown_record",
+                participant="Unknown",
+                apply_fn=apply_unknown_create,
+                compensate_fn=compensate_unknown_create,
+                verify_fn=lambda ok: bool(ok),
+            )
+        )
+
+    tx_result = tx_coordinator.run(
+        operation="CREATE",
+        entity=entity,
+        participants=participants,
+        steps=steps,
+        metadata={"record_id": record_id},
+    )
+
+    if tx_result.get("success"):
+        results = {
+            "record_id": record_id,
+            "inserted_into": participants,
+        }
+    else:
         try:
-            unknown_file = os.path.join(DATA_DIR, "unknown_data.json")
-            existing_data = []
-            if os.path.exists(unknown_file):
-                with open(unknown_file, 'r') as f:
-                    try:
-                        existing_data = json.load(f)
-                    except json.JSONDecodeError:
-                        pass
-            if not isinstance(existing_data, list):
-                existing_data = [existing_data] if existing_data else []
-            existing_data.append(unknown_payload)
-            with open(unknown_file, 'w') as f:
-                json.dump(existing_data, f, indent=2)
-            results["inserted_into"].append("Unknown")
-            print(f"[Unknown] Successfully appended to unknown_data.json")
-        except Exception as e:
-            results["unknown_error"] = str(e)
-            print(f"[Unknown] Error in insertion: {e}")
+            with open(COUNTER_FILE, 'w') as f:
+                f.write(str(record_id))
+        except Exception:
+            pass
+
+        results = {
+            "record_id": record_id,
+            "inserted_into": [],
+            "error": tx_result.get("error"),
+            "compensation_errors": tx_result.get("compensation_errors", []),
+        }
 
     print(f"\n{'='*60}")
     print("[SUMMARY] Create Operation Completed")
@@ -372,8 +526,12 @@ def create_operation(parsed_query, db_analysis):
     return {
         "operation": "CREATE",
         "entity": entity,
-        "status": "success" if results["inserted_into"] else "failed",
-        "details": results
+        "status": "success" if tx_result.get("success") else "failed",
+        "transaction": {
+            "transaction_id": tx_result.get("transaction_id"),
+            "state": tx_result.get("state"),
+        },
+        "details": results,
     }
     
 def update_operation(parsed_query, db_analysis):
@@ -490,71 +648,138 @@ def update_operation(parsed_query, db_analysis):
     
     print(f"[Routing] SQL: {len(sql_updates)} fields, MongoDB: {len(mongo_updates)} fields, Unknown: {len(unknown_updates)} fields")
     
-    updated_summary = {}
-    total_updated = 0
-    
-    if "SQL" in databases_needed and sql_available and matching_record_ids.get("SQL") and sql_updates:
-        try:
+    updated_summary = {"SQL": 0, "MONGO": 0, "Unknown": 0}
+
+    participants = []
+    steps = []
+    tx_metadata = {}
+
+    sql_ids = matching_record_ids.get("SQL", [])
+    if "SQL" in databases_needed and sql_ids and sql_updates:
+        if not sql_available:
+            return {
+                "operation": "UPDATE",
+                "status": "failed",
+                "entity": entity,
+                "error": "SQL participant unavailable",
+            }
+
+        participants.append("SQL")
+        sql_before = _sql_records_by_ids(entity, sql_ids)
+        tx_metadata["sql_record_count"] = len(sql_before)
+
+        def apply_sql_update():
             Model = sql_engine.models.get(entity)
-            if Model:
-                update_query = sql_engine.session.query(Model).filter(
-                    Model.record_id.in_(matching_record_ids["SQL"])
-                )
-                count = update_query.count()
-                update_dict = {field_name: field_value for field_name, field_value in sql_updates.items()}
-                update_query.update(update_dict, synchronize_session=False)
-                sql_engine.session.commit()
-                updated_summary["SQL"] = count
-                total_updated += count
-                print(f"[SQL] Updated {count} records with {len(sql_updates)} fields")
-        except Exception as e:
-            print(f"[SQL] Error in Phase 2: {e}")
-            sql_engine.session.rollback()
-            updated_summary["SQL"] = 0
-    else:
-        updated_summary["SQL"] = 0
-    
-    if "MONGO" in databases_needed and matching_record_ids.get("MONGO") and mongo_updates and mongo_available:
-        try:
-            collection = mongo_db[entity]
-            result = collection.update_many(
-                {"_id": {"$in": matching_record_ids["MONGO"]}},
-                {"$set": mongo_updates}
+            update_query = sql_engine.session.query(Model).filter(Model.record_id.in_(sql_ids))
+            count = update_query.count()
+            update_query.update(dict(sql_updates), synchronize_session=False)
+            sql_engine.session.commit()
+            updated_summary["SQL"] = count
+            return count
+
+        def compensate_sql_update():
+            _sql_restore_records(entity, sql_before)
+
+        steps.append(
+            TransactionStep(
+                name="update_sql_records",
+                participant="SQL",
+                apply_fn=apply_sql_update,
+                compensate_fn=compensate_sql_update,
+                verify_fn=lambda c: c >= 0,
+            )
+        )
+
+    mongo_ids = matching_record_ids.get("MONGO", [])
+    if "MONGO" in databases_needed and mongo_ids and mongo_updates:
+        if not mongo_available:
+            return {
+                "operation": "UPDATE",
+                "status": "failed",
+                "entity": entity,
+                "error": "MongoDB participant unavailable",
+            }
+
+        participants.append("MONGO")
+        mongo_collection = mongo_db[entity]
+        mongo_before = list(mongo_collection.find({"_id": {"$in": mongo_ids}}))
+        tx_metadata["mongo_record_count"] = len(mongo_before)
+
+        def apply_mongo_update():
+            result = mongo_collection.update_many(
+                {"_id": {"$in": mongo_ids}},
+                {"$set": mongo_updates},
             )
             updated_summary["MONGO"] = result.modified_count
-            total_updated += result.modified_count
-            print(f"[MONGO] Updated {result.modified_count} documents with {len(mongo_updates)} fields")
-        except Exception as e:
-            print(f"[MONGO] Error in Phase 2: {e}")
-            updated_summary["MONGO"] = 0
-    elif "MONGO" in databases_needed:
-        if not mongo_available:
-            print(f"[MONGO] Skipped (MongoDB not available)")
-        updated_summary["MONGO"] = 0
-    
-    if "Unknown" in databases_needed and matching_record_ids.get("Unknown") and unknown_updates:
-        try:
-            unknown_file = os.path.join(DATA_DIR, "unknown_data.json")
-            if os.path.exists(unknown_file):
-                with open(unknown_file, 'r') as f:
-                    data = json.load(f)
-                all_records = data if isinstance(data, list) else [data]
-                updated_count = 0
-                for record in all_records:
-                    if record.get("record_id") in matching_record_ids["Unknown"]:
-                        for key, value in unknown_updates.items():
-                            record[key] = value
-                        updated_count += 1
-                with open(unknown_file, 'w') as f:
-                    json.dump(all_records, f, indent=2)
-                updated_summary["Unknown"] = updated_count
-                total_updated += updated_count
-                print(f"[Unknown] Updated {updated_count} records with {len(unknown_updates)} fields")
-        except Exception as e:
-            print(f"[Unknown] Error in Phase 2: {e}")
-            updated_summary["Unknown"] = 0
-    else:
-        updated_summary["Unknown"] = 0
+            return result
+
+        def compensate_mongo_update():
+            for doc in mongo_before:
+                mongo_collection.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+
+        steps.append(
+            TransactionStep(
+                name="update_mongo_documents",
+                participant="MONGO",
+                apply_fn=apply_mongo_update,
+                compensate_fn=compensate_mongo_update,
+                verify_fn=lambda r: r.acknowledged,
+            )
+        )
+
+    unknown_ids = matching_record_ids.get("Unknown", [])
+    if "Unknown" in databases_needed and unknown_ids and unknown_updates:
+        participants.append("Unknown")
+        unknown_before = _load_unknown_records()
+        tx_metadata["unknown_record_count"] = len(unknown_before)
+
+        def apply_unknown_update():
+            current = _load_unknown_records()
+            changed = 0
+            for record in current:
+                if record.get("record_id") in unknown_ids:
+                    for key, value in unknown_updates.items():
+                        record[key] = value
+                    changed += 1
+            _write_unknown_records(current)
+            updated_summary["Unknown"] = changed
+            return changed
+
+        def compensate_unknown_update():
+            _write_unknown_records(unknown_before)
+
+        steps.append(
+            TransactionStep(
+                name="update_unknown_records",
+                participant="Unknown",
+                apply_fn=apply_unknown_update,
+                compensate_fn=compensate_unknown_update,
+                verify_fn=lambda c: c >= 0,
+            )
+        )
+
+    if not steps:
+        return {
+            "operation": "UPDATE",
+            "status": "success",
+            "entity": entity,
+            "filters_applied": filters,
+            "updated_by_database": updated_summary,
+            "total_updated": 0,
+            "transaction": None,
+        }
+
+    tx_result = tx_coordinator.run(
+        operation="UPDATE",
+        entity=entity,
+        participants=participants,
+        steps=steps,
+        metadata=tx_metadata,
+    )
+
+    if not tx_result.get("success"):
+        updated_summary = {"SQL": 0, "MONGO": 0, "Unknown": 0}
+    total_updated = sum(updated_summary.values()) if tx_result.get("success") else 0
     
     print(f"\n{'='*60}")
     print("[SUMMARY] Total records updated:")
@@ -566,11 +791,17 @@ def update_operation(parsed_query, db_analysis):
     
     return {
         "operation": "UPDATE",
-        "status": "success",
+        "status": "success" if tx_result.get("success") else "failed",
         "entity": entity,
         "filters_applied": filters,
         "updated_by_database": updated_summary,
-        "total_updated": total_updated
+        "total_updated": total_updated,
+        "transaction": {
+            "transaction_id": tx_result.get("transaction_id"),
+            "state": tx_result.get("state"),
+            "error": tx_result.get("error"),
+            "compensation_errors": tx_result.get("compensation_errors", []),
+        },
     }
     
 def delete_operation(parsed_query, db_analysis):
@@ -662,62 +893,130 @@ def delete_operation(parsed_query, db_analysis):
     print("[PHASE 2] Deleting records by record_id...")
     print(f"{'─'*60}")
     
-    deleted_summary = {}
-    total_deleted = 0
-    
-    if "SQL" in databases_needed and sql_available and matching_record_ids.get("SQL"):
-        try:
+    deleted_summary = {"SQL": 0, "MONGO": 0, "Unknown": 0}
+
+    participants = []
+    steps = []
+    tx_metadata = {}
+
+    sql_ids = matching_record_ids.get("SQL", [])
+    if "SQL" in databases_needed and sql_ids:
+        if not sql_available:
+            return {
+                "operation": "DELETE",
+                "status": "failed",
+                "entity": entity,
+                "error": "SQL participant unavailable",
+            }
+
+        participants.append("SQL")
+        sql_before = _sql_records_by_ids(entity, sql_ids)
+        tx_metadata["sql_record_count"] = len(sql_before)
+
+        def apply_sql_delete():
             Model = sql_engine.models.get(entity)
-            if Model:
-                delete_query = sql_engine.session.query(Model).filter(
-                    Model.record_id.in_(matching_record_ids["SQL"])
-                )
-                count = delete_query.count()
-                delete_query.delete()
-                sql_engine.session.commit()
-                deleted_summary["SQL"] = count
-                total_deleted += count
-                print(f"[SQL] Deleted {count} records")
-        except Exception as e:
-            print(f"[SQL] Error in Phase 2: {e}")
-            sql_engine.session.rollback()
-            deleted_summary["SQL"] = 0
-    else:
-        deleted_summary["SQL"] = 0
-    
-    if "MONGO" in databases_needed and matching_record_ids.get("MONGO") and mongo_available:
-        try:
-            collection = mongo_db[entity]
-            result = collection.delete_many({"_id": {"$in": matching_record_ids["MONGO"]}})
+            query = sql_engine.session.query(Model).filter(Model.record_id.in_(sql_ids))
+            count = query.count()
+            query.delete()
+            sql_engine.session.commit()
+            deleted_summary["SQL"] = count
+            return count
+
+        def compensate_sql_delete():
+            _sql_restore_records(entity, sql_before)
+
+        steps.append(
+            TransactionStep(
+                name="delete_sql_records",
+                participant="SQL",
+                apply_fn=apply_sql_delete,
+                compensate_fn=compensate_sql_delete,
+                verify_fn=lambda c: c >= 0,
+            )
+        )
+
+    mongo_ids = matching_record_ids.get("MONGO", [])
+    if "MONGO" in databases_needed and mongo_ids:
+        if not mongo_available:
+            return {
+                "operation": "DELETE",
+                "status": "failed",
+                "entity": entity,
+                "error": "MongoDB participant unavailable",
+            }
+
+        participants.append("MONGO")
+        mongo_collection = mongo_db[entity]
+        mongo_before = list(mongo_collection.find({"_id": {"$in": mongo_ids}}))
+        tx_metadata["mongo_record_count"] = len(mongo_before)
+
+        def apply_mongo_delete():
+            result = mongo_collection.delete_many({"_id": {"$in": mongo_ids}})
             deleted_summary["MONGO"] = result.deleted_count
-            total_deleted += result.deleted_count
-            print(f"[MONGO] Deleted {result.deleted_count} documents")
-        except Exception as e:
-            print(f"[MONGO] Error in Phase 2: {e}")
-            deleted_summary["MONGO"] = 0
-    elif "MONGO" in databases_needed:
-        print(f"[MONGO] Skipped (MongoDB not available)")
-        deleted_summary["MONGO"] = 0
-    
-    if "Unknown" in databases_needed and matching_record_ids.get("Unknown"):
-        try:
-            unknown_file = os.path.join(DATA_DIR, "unknown_data.json")
-            if os.path.exists(unknown_file):
-                with open(unknown_file, 'r') as f:
-                    data = json.load(f)
-                all_records = data if isinstance(data, list) else [data]
-                remaining_records = [r for r in all_records if r.get("record_id") not in matching_record_ids["Unknown"]]
-                with open(unknown_file, 'w') as f:
-                    json.dump(remaining_records, f, indent=2)
-                deleted_count = len(all_records) - len(remaining_records)
-                deleted_summary["Unknown"] = deleted_count
-                total_deleted += deleted_count
-                print(f"[Unknown] Deleted {deleted_count} records")
-        except Exception as e:
-            print(f"[Unknown] Error in Phase 2: {e}")
-            deleted_summary["Unknown"] = 0
-    else:
-        deleted_summary["Unknown"] = 0
+            return result
+
+        def compensate_mongo_delete():
+            if mongo_before:
+                mongo_collection.insert_many(mongo_before, ordered=False)
+
+        steps.append(
+            TransactionStep(
+                name="delete_mongo_documents",
+                participant="MONGO",
+                apply_fn=apply_mongo_delete,
+                compensate_fn=compensate_mongo_delete,
+                verify_fn=lambda r: r.acknowledged,
+            )
+        )
+
+    unknown_ids = matching_record_ids.get("Unknown", [])
+    if "Unknown" in databases_needed and unknown_ids:
+        participants.append("Unknown")
+        unknown_before = _load_unknown_records()
+        tx_metadata["unknown_record_count"] = len(unknown_before)
+
+        def apply_unknown_delete():
+            current = _load_unknown_records()
+            remaining = [r for r in current if r.get("record_id") not in unknown_ids]
+            deleted_summary["Unknown"] = len(current) - len(remaining)
+            _write_unknown_records(remaining)
+            return deleted_summary["Unknown"]
+
+        def compensate_unknown_delete():
+            _write_unknown_records(unknown_before)
+
+        steps.append(
+            TransactionStep(
+                name="delete_unknown_records",
+                participant="Unknown",
+                apply_fn=apply_unknown_delete,
+                compensate_fn=compensate_unknown_delete,
+                verify_fn=lambda c: c >= 0,
+            )
+        )
+
+    if not steps:
+        return {
+            "operation": "DELETE",
+            "status": "success",
+            "entity": entity,
+            "filters_applied": filters,
+            "deleted_by_database": deleted_summary,
+            "total_deleted": 0,
+            "transaction": None,
+        }
+
+    tx_result = tx_coordinator.run(
+        operation="DELETE",
+        entity=entity,
+        participants=participants,
+        steps=steps,
+        metadata=tx_metadata,
+    )
+
+    if not tx_result.get("success"):
+        deleted_summary = {"SQL": 0, "MONGO": 0, "Unknown": 0}
+    total_deleted = sum(deleted_summary.values()) if tx_result.get("success") else 0
     
     print(f"\n{'='*60}")
     print("[SUMMARY] Total records deleted:")
@@ -729,9 +1028,15 @@ def delete_operation(parsed_query, db_analysis):
     
     return {
         "operation": "DELETE",
-        "status": "success",
+        "status": "success" if tx_result.get("success") else "failed",
         "entity": entity,
         "filters_applied": filters,
         "deleted_by_database": deleted_summary,
-        "total_deleted": total_deleted
+        "total_deleted": total_deleted,
+        "transaction": {
+            "transaction_id": tx_result.get("transaction_id"),
+            "state": tx_result.get("state"),
+            "error": tx_result.get("error"),
+            "compensation_errors": tx_result.get("compensation_errors", []),
+        },
     }

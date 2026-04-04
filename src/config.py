@@ -18,6 +18,7 @@ MONGO_DATA_FILE = os.path.join(DATA_DIR, "mongo_data.json")
 QUERY_FILE = os.path.join(DATA_DIR, "query.json")
 QUERY_OUTPUT_FILE = os.path.join(DATA_DIR, "query_output.json")
 CHECKPOINT_FILE = os.path.join(DATA_DIR, "checkpoint.json")
+TRANSACTION_LOG_FILE = os.path.join(DATA_DIR, "transaction_log.json")
 
 # Database configuration
 DATABASE_URL = os.environ.get("POSTGRES_URI", "postgresql://admin:secret@localhost:5432/cs432_db")

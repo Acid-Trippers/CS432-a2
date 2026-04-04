@@ -1,0 +1,61 @@
+[
+  {
+    "transaction_id": "0d0e4407-9042-47de-b97d-80e5e654d0ad",
+    "operation": "CREATE",
+    "entity": "main_records",
+    "participants": [
+      "SQL",
+      "MONGO"
+    ],
+    "state": "committed",
+    "started_at": "2026-04-04T06:54:23.471743Z",
+    "ended_at": "2026-04-04T06:54:23.497917Z",
+    "events": [
+      {
+        "time": "2026-04-04T06:54:23.471743Z",
+        "type": "transaction_started",
+        "payload": {}
+      },
+      {
+        "time": "2026-04-04T06:54:23.471743Z",
+        "type": "step_apply_started",
+        "payload": {
+          "step": "create_sql_record",
+          "participant": "SQL"
+        }
+      },
+      {
+        "time": "2026-04-04T06:54:23.491071Z",
+        "type": "step_apply_succeeded",
+        "payload": {
+          "step": "create_sql_record",
+          "participant": "SQL"
+        }
+      },
+      {
+        "time": "2026-04-04T06:54:23.491071Z",
+        "type": "step_apply_started",
+        "payload": {
+          "step": "create_mongo_document",
+          "participant": "MONGO"
+        }
+      },
+      {
+        "time": "2026-04-04T06:54:23.497917Z",
+        "type": "step_apply_succeeded",
+        "payload": {
+          "step": "create_mongo_document",
+          "participant": "MONGO"
+        }
+      },
+      {
+        "time": "2026-04-04T06:54:23.497917Z",
+        "type": "transaction_committed",
+        "payload": {}
+      }
+    ],
+    "metadata": {
+      "record_id": 1250
+    }
+  }
+]

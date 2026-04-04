@@ -2,14 +2,15 @@
     "operation": "CREATE",
     "entity": "main_records",
     "payload": {
-        "username": "adityashah",
+        "username": "tx_user_001",
+        "name": "Transaction Test User",
+        "age": 29,
+        "email": "tx_user_001@example.com",
+        "phone": "555-0101",
         "city": "Ahmedabad",
         "country": "India",
-        "subscription": "premium",
-        "device_model": "iPhone 15",
-        "language": "en",
-        "email": "aditya@iitgn.ac.in",
-        "mood": "happy",
-        "heart_rate": 72
+        "timestamp": "2026-04-04T12:00:00Z",
+        "action": "login",
+        "comment": "manual transaction test"
     }
 }

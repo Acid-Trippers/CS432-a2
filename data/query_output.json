@@ -2,6 +2,10 @@
   "operation": "CREATE",
   "entity": "main_records",
   "status": "success",
+  "transaction": {
+    "transaction_id": "0d0e4407-9042-47de-b97d-80e5e654d0ad",
+    "state": "committed"
+  },
   "details": {
     "record_id": 1250,
     "inserted_into": [
